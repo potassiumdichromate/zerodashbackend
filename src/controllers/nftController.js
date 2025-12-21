@@ -16,7 +16,7 @@ const IMAGE_CID = 'bafybeieqg5azdxn63o64aznbupzdxbigwyjdh3bbhb6u2x5yftrexiuhfy';
 let merkleProofs = {};
 
 try {
-  const proofsPath = path.join(__dirname, '../merkle-data/merkle-proofs.json');
+  const proofsPath = path.join(__dirname, '../../merkle-data/merkle-proofs.json');
   merkleProofs = JSON.parse(fs.readFileSync(proofsPath, 'utf-8'));
   console.log('✅ Loaded Merkle proofs for', Object.keys(merkleProofs).length, 'addresses');
 } catch (error) {
