@@ -4,20 +4,30 @@ const Player = require("../models/Player");
  * GET PLAYER PROFILE
  */
 exports.getProfile = async (req, res) => {
-  let player = await Player.findOne({ walletAddress: req.walletAddress });
+  try {
+    let player = await Player.findOne({ walletAddress: req.walletAddress });
 
-  if (!player) {
-    player = await Player.create({
-      walletAddress: req.walletAddress
+    // ✅ Create default player if not exists
+    if (!player) {
+      player = await Player.create({
+        walletAddress: req.walletAddress,
+        coins: 10,
+        highScore: 0,
+        nftPass: false,
+        characters: {
+          unlocked: [],
+          currentIndex: 0
+        }
+      });
+    }
+
+    return res.json(player);
+  } catch (err) {
+    console.error("Get profile error:", err);
+    return res.status(500).json({
+      error: "Failed to load player profile"
     });
   }
-
-  res.json({
-    coins: player.coins,
-    highScore: player.highScore,
-    characters: player.characters,
-    dailyReward: player.dailyReward
-  });
 };
 
 /**
@@ -75,4 +85,33 @@ exports.getLeaderboard = async (req, res) => {
     // ✅ Never crash Render
     res.status(200).json([]);
   }
+
+
+  exports.activateNftPass = async (req, res) => {
+    try {
+      const { nftPass } = req.body;
+  
+      if (nftPass !== true) {
+        return res.status(400).json({
+          error: "nftPass must be true"
+        });
+      }
+  
+      const player = await Player.findOneAndUpdate(
+        { walletAddress: req.walletAddress },
+        { $set: { nftPass: true } },
+        { upsert: true, new: true }
+      );
+  
+      return res.json({
+        success: true,
+        nftPass: player.nftPass
+      });
+    } catch (err) {
+      console.error("NFT Pass update error:", err);
+      return res.status(500).json({
+        error: "Failed to activate NFT Pass"
+      });
+    }
+  };
 };
