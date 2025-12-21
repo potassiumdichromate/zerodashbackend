@@ -56,14 +56,23 @@ exports.saveProfile = async (req, res) => {
  * LEADERBOARD (TOP SCORES)
  */
 exports.getLeaderboard = async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
 
-  const leaderboard = await Player.find(
-    { highScore: { $gt: 0 } },
-    { walletAddress: 1, highScore: 1, _id: 0 }
-  )
-    .sort({ highScore: -1 })
-    .limit(limit);
+    const players = await Player.find(
+      {},
+      { walletAddress: 1, highScore: 1, _id: 0 }
+    )
+      .sort({ highScore: -1 })
+      .limit(limit)
+      .lean();
 
-  res.json(leaderboard);
+    // ✅ ALWAYS return array
+    res.json(players ?? []);
+  } catch (err) {
+    console.error("Leaderboard error:", err);
+
+    // ✅ Never crash Render
+    res.status(200).json([]);
+  }
 };
