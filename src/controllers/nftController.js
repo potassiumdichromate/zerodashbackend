@@ -3,10 +3,26 @@
 /**
  * NFT Metadata Controller
  * Generates dynamic metadata for Zero Dash Pass NFTs
+ * Includes Merkle Tree whitelist functionality
  */
+
+const fs = require('fs');
+const path = require('path');
 
 // Your IPFS CIDs from Pinata
 const IMAGE_CID = 'bafybeieqg5azdxn63o64aznbupzdxbigwyjdh3bbhb6u2x5yftrexiuhfy'; // Replace with actual CID
+
+// Load Merkle proofs for whitelist verification
+let merkleProofs = {};
+
+try {
+  const proofsPath = path.join(__dirname, '../merkle-data/merkle-proofs.json');
+  merkleProofs = JSON.parse(fs.readFileSync(proofsPath, 'utf-8'));
+  console.log('✅ Loaded Merkle proofs for', Object.keys(merkleProofs).length, 'addresses');
+} catch (error) {
+  console.warn('⚠️  Merkle proofs not found. Whitelisted minting will not work.');
+  console.warn('   Please upload merkle-proofs.json to backend/merkle-data/');
+}
 
 /**
  * Get NFT metadata for a specific token ID
@@ -131,6 +147,11 @@ exports.healthCheck = async (req, res) => {
       ipfs: {
         image_cid: IMAGE_CID,
         image_configured: IMAGE_CID !== 'YOUR_IMAGE_CID_FROM_PINATA',
+      },
+      merkle: {
+        proofs_loaded: Object.keys(merkleProofs).length > 0,
+        total_whitelisted: Object.keys(merkleProofs).length,
+        status: Object.keys(merkleProofs).length > 0 ? 'active' : 'not configured'
       }
     };
 
@@ -140,6 +161,121 @@ exports.healthCheck = async (req, res) => {
     res.status(500).json({ 
       status: 'error',
       message: error.message 
+    });
+  }
+};
+
+// ============================================
+// MERKLE TREE WHITELIST FUNCTIONS
+// ============================================
+
+/**
+ * Get Merkle proof for an address
+ * @route GET /nft/proof/:address
+ */
+exports.getMerkleProof = async (req, res) => {
+  try {
+    const { address } = req.params;
+    
+    if (!address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address is required'
+      });
+    }
+    
+    // Normalize address to lowercase
+    const normalizedAddress = address.toLowerCase();
+    
+    // Get proof for this address
+    const proof = merkleProofs[normalizedAddress];
+    
+    if (!proof) {
+      // Not whitelisted - return empty proof
+      return res.json({
+        success: true,
+        isWhitelisted: false,
+        proof: [],
+        message: 'Address not whitelisted. Mint price: 5 0G'
+      });
+    }
+    
+    // Whitelisted!
+    return res.json({
+      success: true,
+      isWhitelisted: true,
+      proof: proof,
+      message: 'Address whitelisted! Mint for FREE'
+    });
+    
+  } catch (error) {
+    console.error('Error getting Merkle proof:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get Merkle proof',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Check if address is whitelisted
+ * @route GET /nft/whitelist/check/:address
+ */
+exports.checkWhitelist = async (req, res) => {
+  try {
+    const { address } = req.params;
+    
+    if (!address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address is required'
+      });
+    }
+    
+    const normalizedAddress = address.toLowerCase();
+    const isWhitelisted = !!merkleProofs[normalizedAddress];
+    
+    return res.json({
+      success: true,
+      address: normalizedAddress,
+      isWhitelisted: isWhitelisted,
+      message: isWhitelisted ? 'Whitelisted - FREE mint!' : 'Not whitelisted - 5 0G to mint'
+    });
+    
+  } catch (error) {
+    console.error('Error checking whitelist:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check whitelist',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get whitelist statistics
+ * @route GET /nft/whitelist/stats
+ */
+exports.getWhitelistStats = async (req, res) => {
+  try {
+    const stats = {
+      success: true,
+      totalWhitelisted: Object.keys(merkleProofs).length,
+      merkleRootConfigured: Object.keys(merkleProofs).length > 0,
+      contractAddress: '0x09904F6f4013ce41dc2d7ac0fF09C26F3aD86e53',
+      network: '0G Blockchain',
+      chainId: 16661
+    };
+    
+    return res.json(stats);
+    
+  } catch (error) {
+    console.error('Error getting whitelist stats:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get whitelist stats',
+      error: error.message
     });
   }
 };
