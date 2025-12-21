@@ -35,31 +35,38 @@ exports.getProfile = async (req, res) => {
  * Server trusts only allowed fields
  */
 exports.saveProfile = async (req, res) => {
-  const { coins, highScore, characters, dailyReward } = req.body;
+  try {
+    const { coins, highScore, characters, dailyReward } = req.body;
 
-  const update = {};
+    const update = {};
 
-  if (Number.isInteger(coins)) update.coins = coins;
-  if (Number.isInteger(highScore)) update.highScore = highScore;
+    if (Number.isInteger(coins)) update.coins = coins;
+    if (Number.isInteger(highScore)) update.highScore = highScore;
 
-  if (characters) {
-    update.characters = {
-      unlocked: characters.unlocked || [],
-      currentIndex: characters.currentIndex || 0
-    };
+    if (characters) {
+      update.characters = {
+        unlocked: characters.unlocked || [],
+        currentIndex: characters.currentIndex || 0
+      };
+    }
+
+    if (dailyReward?.nextRewardAt) {
+      update["dailyReward.nextRewardAt"] = new Date(dailyReward.nextRewardAt);
+    }
+
+    const player = await Player.findOneAndUpdate(
+      { walletAddress: req.walletAddress },
+      { $set: update },
+      { upsert: true, new: true }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Save profile error:", err);
+    return res.status(500).json({
+      error: "Failed to save player profile"
+    });
   }
-
-  if (dailyReward?.nextRewardAt) {
-    update["dailyReward.nextRewardAt"] = new Date(dailyReward.nextRewardAt);
-  }
-
-  const player = await Player.findOneAndUpdate(
-    { walletAddress: req.walletAddress },
-    { $set: update },
-    { upsert: true, new: true }
-  );
-
-  res.json({ success: true });
 };
 
 /**
@@ -85,33 +92,39 @@ exports.getLeaderboard = async (req, res) => {
     // ✅ Never crash Render
     res.status(200).json([]);
   }
+};
 
+/**
+ * ACTIVATE NFT PASS
+ * Called after successful NFT mint on blockchain
+ */
+exports.activateNftPass = async (req, res) => {
+  try {
+    const { nftPass } = req.body;
 
-  exports.activateNftPass = async (req, res) => {
-    try {
-      const { nftPass } = req.body;
-  
-      if (nftPass !== true) {
-        return res.status(400).json({
-          error: "nftPass must be true"
-        });
-      }
-  
-      const player = await Player.findOneAndUpdate(
-        { walletAddress: req.walletAddress },
-        { $set: { nftPass: true } },
-        { upsert: true, new: true }
-      );
-  
-      return res.json({
-        success: true,
-        nftPass: player.nftPass
-      });
-    } catch (err) {
-      console.error("NFT Pass update error:", err);
-      return res.status(500).json({
-        error: "Failed to activate NFT Pass"
+    if (nftPass !== true) {
+      return res.status(400).json({
+        success: false,
+        error: "nftPass must be true"
       });
     }
-  };
+
+    const player = await Player.findOneAndUpdate(
+      { walletAddress: req.walletAddress },
+      { $set: { nftPass: true } },
+      { upsert: true, new: true }
+    );
+
+    return res.json({
+      success: true,
+      nftPass: player.nftPass,
+      walletAddress: player.walletAddress
+    });
+  } catch (err) {
+    console.error("NFT Pass update error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to activate NFT Pass"
+    });
+  }
 };
