@@ -11,7 +11,9 @@ const app = express();
 const allowedOrigins = [
   "https://zerodashgame.xyz",
   "http://localhost:3000",
-  "http://localhost:5173"
+  "http://localhost:5173",
+  "https://pub-c51325b05b6848599be1cf2978bc4c0e.r2.dev/v6",
+  "https://pub-c51325b05b6848599be1cf2978bc4c0e.r2.dev"
 ];
 
 app.use(
