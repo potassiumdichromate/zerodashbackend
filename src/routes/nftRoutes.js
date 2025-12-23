@@ -67,4 +67,30 @@ router.get('/whitelist/check/:address', nftController.checkWhitelist);
  */
 router.get('/whitelist/stats', nftController.getWhitelistStats);
 
+// ============================================
+// GASLESS MINTING ROUTES (NEW)
+// ============================================
+
+/**
+ * @route   POST /nft/mint-gasless
+ * @desc    Mint NFT without gas fees - deployer pays all gas
+ * @access  Public
+ * @body    { walletAddress, merkleProof[], signature }
+ * @example POST /nft/mint-gasless
+ *          Body: {
+ *            "walletAddress": "0x123...",
+ *            "merkleProof": ["0xabc...", "0xdef..."],
+ *            "signature": "0x456..."
+ *          }
+ */
+router.post('/mint-gasless', nftController.mintGasless);
+
+/**
+ * @route   GET /nft/relayer/status
+ * @desc    Get relayer wallet status and balance
+ * @access  Public
+ * @example GET /nft/relayer/status
+ */
+router.get('/relayer/status', nftController.getRelayerStatus);
+
 module.exports = router;
