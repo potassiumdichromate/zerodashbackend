@@ -7,7 +7,7 @@ const { ethers } = require('ethers');
 
 // Configuration
 const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY; // Your deployer wallet private key
-const CONTRACT_ADDRESS = '0x09904F6f4013ce41dc2d7ac0fF09C26F3aD86e53';
+const CONTRACT_ADDRESS = '0x0d2145097468D78266cbf6c89974E880e3Ae5bb0';
 const RPC_URL = 'https://evmrpc.0g.ai';
 const CHAIN_ID = 16661;
 
