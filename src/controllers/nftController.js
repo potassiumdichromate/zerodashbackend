@@ -345,6 +345,8 @@ exports.getWhitelistStats = async (req, res) => {
  * Gasless NFT minting - deployer pays ALL gas fees
  * User only pays 5 0G if not whitelisted (no gas)
  */
+// Replace the mintGasless function in nftController.js with this fixed version
+
 exports.mintGasless = async (req, res) => {
   try {
     const { walletAddress, merkleProof, signature } = req.body;
@@ -374,7 +376,6 @@ exports.mintGasless = async (req, res) => {
 
     console.log('\n🎫 Processing gasless mint request...');
     console.log('   User:', walletAddress);
-    console.log('   Whitelisted:', merkleProof && merkleProof.length > 0);
 
     // 1. Verify user signature (proves they own the wallet)
     const message = `Mint Zero Dash Pass NFT to ${walletAddress}`;
@@ -409,16 +410,30 @@ exports.mintGasless = async (req, res) => {
 
     console.log('   ✅ Not minted yet');
 
-    // 3. Check if whitelisted
-    const isWhitelisted = merkleProof && merkleProof.length > 0;
-    let mintPrice = 0;
+    // 3. ⚠️ IMPORTANT: Verify Merkle proof with CONTRACT (not just check if exists)
+    let isWhitelisted = false;
+    let mintPrice = ethers.parseEther('5'); // Default: 5 0G
 
-    if (!isWhitelisted) {
-      // Non-whitelisted users must pay 5 0G (but still no gas!)
-      mintPrice = ethers.parseEther('5');
-      console.log('   💎 Non-whitelisted: 5 0G mint price (user pays)');
+    if (merkleProof && merkleProof.length > 0) {
+      try {
+        // Ask the contract if this proof is valid
+        isWhitelisted = await nftContract.isWhitelisted(walletAddress, merkleProof);
+        console.log('   📋 Contract verification:', isWhitelisted ? 'WHITELISTED ✅' : 'NOT WHITELISTED ❌');
+      } catch (error) {
+        console.log('   ⚠️  Merkle proof verification failed:', error.message);
+        isWhitelisted = false;
+      }
     } else {
-      console.log('   🎁 Whitelisted: FREE mint');
+      console.log('   📋 No Merkle proof provided');
+    }
+
+    // Set mint price based on ACTUAL whitelist status from contract
+    if (isWhitelisted) {
+      mintPrice = 0; // FREE for whitelisted
+      console.log('   🎁 Whitelisted: FREE mint (0 0G)');
+    } else {
+      mintPrice = ethers.parseEther('5'); // 5 0G for non-whitelisted
+      console.log('   💎 Non-whitelisted: 5 0G mint price');
     }
 
     // 4. Check relayer balance
@@ -427,10 +442,12 @@ exports.mintGasless = async (req, res) => {
     
     console.log('   👛 Relayer balance:', relayerBalanceEth, '0G');
 
-    if (relayerBalance < ethers.parseEther('0.001')) {
+    // Check if relayer has enough balance
+    const requiredBalance = mintPrice + ethers.parseEther('0.001'); // mint price + gas buffer
+    if (relayerBalance < requiredBalance) {
       return res.status(500).json({ 
         success: false, 
-        message: 'Relayer out of funds. Contact admin.' 
+        message: 'Relayer insufficient funds. Contact admin.' 
       });
     }
 
@@ -444,6 +461,19 @@ exports.mintGasless = async (req, res) => {
       console.log('   ⛽ Estimated gas:', estimatedGas.toString());
     } catch (error) {
       console.error('   ❌ Gas estimation failed:', error.message);
+      
+      // If gas estimation fails, it's likely because:
+      // 1. User already minted
+      // 2. Merkle proof is invalid and price is wrong
+      // 3. Contract is paused
+      
+      if (error.message?.includes('Insufficient payment')) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid whitelist proof. You need to pay 5 0G to mint.' 
+        });
+      }
+      
       return res.status(400).json({ 
         success: false, 
         message: 'Transaction would fail: ' + error.message 
@@ -452,6 +482,8 @@ exports.mintGasless = async (req, res) => {
 
     // 6. Send transaction from relayer wallet (YOU PAY GAS!)
     console.log('   🚀 Sending transaction...');
+    console.log('      Mint price:', ethers.formatEther(mintPrice), '0G');
+    console.log('      Gas estimate:', estimatedGas.toString());
     
     const tx = await nftContract.mint(merkleProof || [], {
       value: mintPrice, // 0 for whitelisted, 5 0G for non-whitelisted
@@ -479,11 +511,12 @@ exports.mintGasless = async (req, res) => {
     const gasCostEth = ethers.formatEther(gasCost);
     
     console.log('   💰 Gas cost (paid by deployer):', gasCostEth, '0G');
+    console.log('   💰 Mint price (paid by deployer):', ethers.formatEther(mintPrice), '0G');
+    console.log('   💰 Total cost (paid by deployer):', ethers.formatEther(gasCost + mintPrice), '0G');
 
     // 9. Extract token ID from logs
     let tokenId;
     try {
-      // Find Transfer event: Transfer(address(0), to, tokenId)
       const transferLog = receipt.logs.find(log => 
         log.topics[0] === ethers.id('Transfer(address,address,uint256)')
       );
@@ -498,12 +531,14 @@ exports.mintGasless = async (req, res) => {
     res.json({
       success: true,
       message: isWhitelisted 
-        ? 'NFT minted successfully for FREE!' 
-        : 'NFT minted successfully! 5 0G paid.',
+        ? 'NFT minted successfully for FREE! Deployer paid gas.' 
+        : 'NFT minted successfully! Deployer paid 5 0G + gas.',
       transactionHash: tx.hash,
       tokenId: tokenId,
       explorerUrl: `https://explorer.0g.ai/tx/${tx.hash}`,
       gasPaidByDeployer: gasCostEth + ' 0G',
+      mintPricePaidByDeployer: ethers.formatEther(mintPrice) + ' 0G',
+      totalPaidByDeployer: ethers.formatEther(gasCost + mintPrice) + ' 0G',
       whitelisted: isWhitelisted,
       mintPrice: isWhitelisted ? '0 0G' : '5 0G'
     });
@@ -517,6 +552,8 @@ exports.mintGasless = async (req, res) => {
       errorMessage = 'Contract call failed. You may have already minted.';
     } else if (error.message?.includes('insufficient funds')) {
       errorMessage = 'Relayer out of funds. Contact admin.';
+    } else if (error.message?.includes('Insufficient payment')) {
+      errorMessage = 'Invalid whitelist proof. Mint price is 5 0G.';
     } else if (error.message?.includes('Already minted')) {
       errorMessage = 'You already minted your NFT Pass.';
     } else if (error.message?.includes('Max supply')) {
