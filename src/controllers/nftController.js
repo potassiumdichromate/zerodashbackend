@@ -31,7 +31,7 @@ try {
 // ============================================
 
 const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY;
-const CONTRACT_ADDRESS = '0x0d2145097468D78266cbf6c89974E880e3Ae5bb0';
+const CONTRACT_ADDRESS = ' 0xbfe7aAfEB3145962943412413d69582630C5830D';
 const RPC_URL = 'https://evmrpc.0g.ai';
 const CHAIN_ID = 16661;
 
