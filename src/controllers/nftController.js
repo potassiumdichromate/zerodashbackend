@@ -451,7 +451,7 @@ exports.mintGasless = async (req, res) => {
     try {
       estimatedGas = await nftContract.mint.estimateGas(
         merkleProof || [],
-        { value: mintPrice }
+        { value: BigInt(mintPrice) }  // ← Force BigInt
       );
       console.log('   ⛽ Estimated gas:', estimatedGas.toString());
     } catch (error) {
