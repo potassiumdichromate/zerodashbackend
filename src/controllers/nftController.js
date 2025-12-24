@@ -442,25 +442,27 @@ exports.mintGasless = async (req, res) => {
     
     console.log('   👛 Relayer balance:', relayerBalanceEth, '0G');
 
-    // Check if relayer has enough balance
-    const requiredBalance = mintPrice + ethers.parseEther('0.001'); // mint price + gas buffer
-    if (relayerBalance < requiredBalance) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Relayer insufficient funds. Contact admin.' 
-      });
-    }
+    // 4. Check relayer balance
+const relayerBalance = await provider.getBalance(relayerWallet.address);
+const relayerBalanceEth = ethers.formatEther(relayerBalance);
 
-    // 5. Estimate gas (for logging)
-    let estimatedGas;
-    try {
-      estimatedGas = await nftContract.mint.estimateGas(
-        merkleProof || [],
-        { value: mintPrice }
-      );
-      console.log('   ⛽ Estimated gas:', estimatedGas.toString());
-    } catch (error) {
-      console.error('   ❌ Gas estimation failed:', error.message);
+console.log('   👛 Relayer balance:', relayerBalanceEth, '0G');
+
+if (relayerBalance < ethers.parseEther('0.001')) {
+  return res.status(500).json({ 
+    success: false, 
+    message: 'Relayer out of funds. Contact admin.' 
+  });
+}
+
+// 5. Estimate gas (for logging)
+let estimatedGas;
+try {
+  estimatedGas = await nftContract.mint.estimateGas(
+    merkleProof || [],
+    { value: mintPrice }
+  );
+  console.log('   ⛽ Estimated gas:', estimatedGas.toString());
       
       // If gas estimation fails, it's likely because:
       // 1. User already minted
