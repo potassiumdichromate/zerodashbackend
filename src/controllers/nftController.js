@@ -523,7 +523,26 @@ exports.mintGasless = async (req, res) => {
       console.log('   ⚠️  Could not extract token ID');
     }
 
-    // 10. Success response
+    // 10. Update player NFT pass status in database
+    try {
+      const Player = require('../models/Player');
+      await Player.findOneAndUpdate(
+        { walletAddress: walletAddress.toLowerCase() },
+        { 
+          nftPass: true,
+          nftTransactionHash: tx.hash,
+          nftTokenId: tokenId,
+          nftMintedAt: new Date()
+        },
+        { upsert: true }
+      );
+      console.log('   ✅ Database updated: NFT pass = true');
+    } catch (dbError) {
+      console.warn('   ⚠️  Database update failed:', dbError.message);
+      // Don't throw - NFT is minted successfully
+    }
+
+    // 11. Success response
     res.json({
       success: true,
       message: 'NFT minted successfully! Zero cost to you - deployer paid everything!',
