@@ -252,7 +252,7 @@ exports.getMerkleProof = async (req, res) => {
         success: true,
         isWhitelisted: false,
         proof: [],
-        message: 'Address not whitelisted. Mint price: 5 0G (No gas fees!)'
+        message: 'Address not whitelisted. Deployer pays 5 0G + gas for you!'
       });
     }
     
@@ -261,7 +261,7 @@ exports.getMerkleProof = async (req, res) => {
       success: true,
       isWhitelisted: true,
       proof: proof,
-      message: 'Address whitelisted! Mint for FREE (No gas fees!)'
+      message: 'Address whitelisted! Deployer pays gas for FREE mint!'
     });
     
   } catch (error) {
@@ -296,7 +296,7 @@ exports.checkWhitelist = async (req, res) => {
       success: true,
       address: normalizedAddress,
       isWhitelisted: isWhitelisted,
-      message: isWhitelisted ? 'Whitelisted - FREE mint!' : 'Not whitelisted - 5 0G to mint'
+      message: isWhitelisted ? 'Whitelisted - FREE mint!' : 'Not whitelisted - Deployer pays 5 0G'
     });
     
   } catch (error) {
@@ -342,11 +342,9 @@ exports.getWhitelistStats = async (req, res) => {
 
 /**
  * POST /nft/mint-gasless
- * Gasless NFT minting - deployer pays ALL gas fees
- * User only pays 5 0G if not whitelisted (no gas)
+ * Gasless NFT minting - deployer pays ALL fees (gas + mint price)
+ * Users pay NOTHING - just sign a message
  */
-// Replace the mintGasless function in nftController.js with this fixed version
-
 exports.mintGasless = async (req, res) => {
   try {
     const { walletAddress, merkleProof, signature } = req.body;
@@ -410,13 +408,12 @@ exports.mintGasless = async (req, res) => {
 
     console.log('   ✅ Not minted yet');
 
-    // 3. ⚠️ IMPORTANT: Verify Merkle proof with CONTRACT (not just check if exists)
+    // 3. Verify Merkle proof with CONTRACT
     let isWhitelisted = false;
-    let mintPrice = ethers.parseEther('5'); // Default: 5 0G
+    let mintPrice = BigInt(0); // Initialize as BigInt
 
     if (merkleProof && merkleProof.length > 0) {
       try {
-        // Ask the contract if this proof is valid
         isWhitelisted = await nftContract.isWhitelisted(walletAddress, merkleProof);
         console.log('   📋 Contract verification:', isWhitelisted ? 'WHITELISTED ✅' : 'NOT WHITELISTED ❌');
       } catch (error) {
@@ -427,13 +424,13 @@ exports.mintGasless = async (req, res) => {
       console.log('   📋 No Merkle proof provided');
     }
 
-    // Set mint price based on ACTUAL whitelist status from contract
+    // Set mint price (deployer pays this!)
     if (isWhitelisted) {
-      mintPrice = 0; // FREE for whitelisted
-      console.log('   🎁 Whitelisted: FREE mint (0 0G)');
+      mintPrice = BigInt(0); // FREE for whitelisted
+      console.log('   🎁 Whitelisted: Deployer pays 0 0G + gas');
     } else {
       mintPrice = ethers.parseEther('5'); // 5 0G for non-whitelisted
-      console.log('   💎 Non-whitelisted: 5 0G mint price');
+      console.log('   💎 Non-whitelisted: Deployer pays 5 0G + gas');
     }
 
     // 4. Check relayer balance
@@ -442,37 +439,28 @@ exports.mintGasless = async (req, res) => {
     
     console.log('   👛 Relayer balance:', relayerBalanceEth, '0G');
 
-    // 4. Check relayer balance
-const relayerBalance = await provider.getBalance(relayerWallet.address);
-const relayerBalanceEth = ethers.formatEther(relayerBalance);
+    if (relayerBalance < ethers.parseEther('0.01')) {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Relayer out of funds. Contact admin.' 
+      });
+    }
 
-console.log('   👛 Relayer balance:', relayerBalanceEth, '0G');
-
-if (relayerBalance < ethers.parseEther('0.001')) {
-  return res.status(500).json({ 
-    success: false, 
-    message: 'Relayer out of funds. Contact admin.' 
-  });
-}
-
-// 5. Estimate gas (for logging)
-let estimatedGas;
-try {
-  estimatedGas = await nftContract.mint.estimateGas(
-    merkleProof || [],
-    { value: mintPrice }
-  );
-  console.log('   ⛽ Estimated gas:', estimatedGas.toString());
-      
-      // If gas estimation fails, it's likely because:
-      // 1. User already minted
-      // 2. Merkle proof is invalid and price is wrong
-      // 3. Contract is paused
+    // 5. Estimate gas
+    let estimatedGas;
+    try {
+      estimatedGas = await nftContract.mint.estimateGas(
+        merkleProof || [],
+        { value: mintPrice }
+      );
+      console.log('   ⛽ Estimated gas:', estimatedGas.toString());
+    } catch (error) {
+      console.error('   ❌ Gas estimation failed:', error.message);
       
       if (error.message?.includes('Insufficient payment')) {
         return res.status(400).json({ 
           success: false, 
-          message: 'Invalid whitelist proof. You need to pay 5 0G to mint.' 
+          message: 'Invalid whitelist proof' 
         });
       }
       
@@ -482,20 +470,20 @@ try {
       });
     }
 
-    // 6. Send transaction from relayer wallet (YOU PAY GAS!)
+    // 6. Send transaction from relayer wallet (DEPLOYER PAYS EVERYTHING!)
     console.log('   🚀 Sending transaction...');
-    console.log('      Mint price:', ethers.formatEther(mintPrice), '0G');
+    console.log('      Mint price (deployer pays):', ethers.formatEther(mintPrice), '0G');
     console.log('      Gas estimate:', estimatedGas.toString());
     
     const tx = await nftContract.mint(merkleProof || [], {
-      value: mintPrice, // 0 for whitelisted, 5 0G for non-whitelisted
-      gasLimit: Math.floor(Number(estimatedGas) * 1.2) // 20% buffer
+      value: mintPrice, // Deployer pays: 0 for whitelisted, 5 0G for non-whitelisted
+      gasLimit: Math.floor(Number(estimatedGas) * 1.2)
     });
 
     console.log('   ⏳ Transaction sent:', tx.hash);
     console.log('      Explorer:', `https://explorer.0g.ai/tx/${tx.hash}`);
 
-    // 7. Wait for confirmation (with timeout)
+    // 7. Wait for confirmation
     const receipt = await Promise.race([
       tx.wait(),
       new Promise((_, reject) => 
@@ -507,16 +495,16 @@ try {
     console.log('      Block:', receipt.blockNumber);
     console.log('      Gas used:', receipt.gasUsed.toString());
 
-    // 8. Calculate actual gas cost
+    // 8. Calculate costs (all paid by deployer!)
     const gasPrice = receipt.gasPrice || tx.gasPrice;
     const gasCost = receipt.gasUsed * gasPrice;
-    const gasCostEth = ethers.formatEther(gasCost);
+    const totalCost = gasCost + mintPrice; // Both BigInt
     
-    console.log('   💰 Gas cost (paid by deployer):', gasCostEth, '0G');
-    console.log('   💰 Mint price (paid by deployer):', ethers.formatEther(mintPrice), '0G');
-    console.log('   💰 Total cost (paid by deployer):', ethers.formatEther(gasCost + mintPrice), '0G');
+    console.log('   💰 Gas cost (deployer paid):', ethers.formatEther(gasCost), '0G');
+    console.log('   💰 Mint price (deployer paid):', ethers.formatEther(mintPrice), '0G');
+    console.log('   💰 Total cost (deployer paid):', ethers.formatEther(totalCost), '0G');
 
-    // 9. Extract token ID from logs
+    // 9. Extract token ID
     let tokenId;
     try {
       const transferLog = receipt.logs.find(log => 
@@ -532,17 +520,15 @@ try {
     // 10. Success response
     res.json({
       success: true,
-      message: isWhitelisted 
-        ? 'NFT minted successfully for FREE! Deployer paid gas.' 
-        : 'NFT minted successfully! Deployer paid 5 0G + gas.',
+      message: 'NFT minted successfully! Zero cost to you - deployer paid everything!',
       transactionHash: tx.hash,
       tokenId: tokenId,
       explorerUrl: `https://explorer.0g.ai/tx/${tx.hash}`,
-      gasPaidByDeployer: gasCostEth + ' 0G',
+      gasPaidByDeployer: ethers.formatEther(gasCost) + ' 0G',
       mintPricePaidByDeployer: ethers.formatEther(mintPrice) + ' 0G',
-      totalPaidByDeployer: ethers.formatEther(gasCost + mintPrice) + ' 0G',
-      whitelisted: isWhitelisted,
-      mintPrice: isWhitelisted ? '0 0G' : '5 0G'
+      totalPaidByDeployer: ethers.formatEther(totalCost) + ' 0G',
+      userPaid: '0 0G', // USER PAID NOTHING!
+      whitelisted: isWhitelisted
     });
 
   } catch (error) {
@@ -555,7 +541,7 @@ try {
     } else if (error.message?.includes('insufficient funds')) {
       errorMessage = 'Relayer out of funds. Contact admin.';
     } else if (error.message?.includes('Insufficient payment')) {
-      errorMessage = 'Invalid whitelist proof. Mint price is 5 0G.';
+      errorMessage = 'Invalid whitelist proof.';
     } else if (error.message?.includes('Already minted')) {
       errorMessage = 'You already minted your NFT Pass.';
     } else if (error.message?.includes('Max supply')) {
