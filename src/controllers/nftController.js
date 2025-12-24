@@ -31,12 +31,12 @@ try {
 // ============================================
 
 const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY;
-const CONTRACT_ADDRESS = ' 0xbfe7aAfEB3145962943412413d69582630C5830D';
+const CONTRACT_ADDRESS = '0xbfe7aAfEB3145962943412413d69582630C5830D'; // ← UPDATED!
 const RPC_URL = 'https://evmrpc.0g.ai';
 const CHAIN_ID = 16661;
 
 const NFT_ABI = [
-  "function mint(bytes32[] calldata merkleProof) external payable",
+  "function mint(address recipient, bytes32[] calldata merkleProof) external payable", // ← UPDATED!
   "function hasMinted(address account) external view returns (bool)",
   "function totalMinted() external view returns (uint256)",
   "function isWhitelisted(address account, bytes32[] calldata proof) external view returns (bool)"
@@ -450,8 +450,9 @@ exports.mintGasless = async (req, res) => {
     let estimatedGas;
     try {
       estimatedGas = await nftContract.mint.estimateGas(
-        merkleProof || [],
-        { value: BigInt(mintPrice) }  // ← Force BigInt
+        walletAddress,        // ← RECIPIENT ADDRESS
+        merkleProof || [],    // ← MERKLE PROOF
+        { value: mintPrice }
       );
       console.log('   ⛽ Estimated gas:', estimatedGas.toString());
     } catch (error) {
@@ -472,13 +473,18 @@ exports.mintGasless = async (req, res) => {
 
     // 6. Send transaction from relayer wallet (DEPLOYER PAYS EVERYTHING!)
     console.log('   🚀 Sending transaction...');
+    console.log('      Recipient:', walletAddress);
     console.log('      Mint price (deployer pays):', ethers.formatEther(mintPrice), '0G');
     console.log('      Gas estimate:', estimatedGas.toString());
     
-    const tx = await nftContract.mint(merkleProof || [], {
-      value: mintPrice, // Deployer pays: 0 for whitelisted, 5 0G for non-whitelisted
-      gasLimit: Math.floor(Number(estimatedGas) * 1.2)
-    });
+    const tx = await nftContract.mint(
+      walletAddress,        // ← RECIPIENT ADDRESS
+      merkleProof || [],    // ← MERKLE PROOF
+      {
+        value: mintPrice, // Deployer pays: 0 for whitelisted, 5 0G for non-whitelisted
+        gasLimit: Math.floor(Number(estimatedGas) * 1.2)
+      }
+    );
 
     console.log('   ⏳ Transaction sent:', tx.hash);
     console.log('      Explorer:', `https://explorer.0g.ai/tx/${tx.hash}`);
