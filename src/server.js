@@ -32,16 +32,24 @@ app.use(
 
 app.use(express.json());
 
-// Existing routes
+// Routes
 app.use("/player", require("./routes/player.routes"));
-
-// ✅ NFT Metadata Routes
 app.use('/nft', nftRoutes);
 
 app.get("/", (_, res) => res.send("ZeroDash Backend Running"));
+
+// 🔥 Health check for blockchain connection
+app.get("/blockchain-info", (_, res) => {
+  const sessionService = require("./blockchain/sessionService");
+  res.json({
+    ready: sessionService.isReady(),
+    contractInfo: sessionService.getContractInfo()
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🎨 NFT Metadata API: http://localhost:${PORT}/nft/metadata/0`);
+  console.log(`⛓️  Blockchain Info: http://localhost:${PORT}/blockchain-info`);
 });

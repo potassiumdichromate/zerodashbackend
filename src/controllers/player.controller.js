@@ -1,4 +1,5 @@
 const Player = require("../models/Player");
+const sessionService = require("../blockchain/sessionService");
 
 /**
  * GET PLAYER PROFILE
@@ -32,7 +33,7 @@ exports.getProfile = async (req, res) => {
 
 /**
  * SAVE PLAYER STATE
- * Server trusts only allowed fields
+ * Saves to both MongoDB AND 0G Blockchain
  */
 exports.saveProfile = async (req, res) => {
   try {
@@ -54,13 +55,31 @@ exports.saveProfile = async (req, res) => {
       update["dailyReward.nextRewardAt"] = new Date(dailyReward.nextRewardAt);
     }
 
+    // Save to MongoDB
     const player = await Player.findOneAndUpdate(
       { walletAddress: req.walletAddress },
       { $set: update },
       { upsert: true, new: true }
     );
 
-    res.json({ success: true });
+    // 🔥 Save to 0G Blockchain (non-blocking)
+    let blockchainResult = null;
+    try {
+      blockchainResult = await sessionService.saveSessionOnChain(
+        req.walletAddress,
+        coins || player.coins,
+        highScore || player.highScore
+      );
+    } catch (blockchainError) {
+      console.error("Blockchain save failed (non-critical):", blockchainError);
+    }
+
+    res.json({ 
+      success: true,
+      savedToBlockchain: blockchainResult?.success || false,
+      txHash: blockchainResult?.txHash,
+      explorerUrl: blockchainResult?.explorerUrl
+    });
   } catch (err) {
     console.error("Save profile error:", err);
     return res.status(500).json({
@@ -84,12 +103,9 @@ exports.getLeaderboard = async (req, res) => {
       .limit(limit)
       .lean();
 
-    // ✅ ALWAYS return array
     res.json(players ?? []);
   } catch (err) {
     console.error("Leaderboard error:", err);
-
-    // ✅ Never crash Render
     res.status(200).json([]);
   }
 };
@@ -126,5 +142,75 @@ exports.activateNftPass = async (req, res) => {
       success: false,
       error: "Failed to activate NFT Pass"
     });
+  }
+};
+
+/**
+ * GET ON-CHAIN SESSIONS
+ */
+exports.getOnChainSessions = async (req, res) => {
+  try {
+    const sessions = await sessionService.getPlayerSessions(req.walletAddress);
+    const sessionCount = await sessionService.getSessionCount(req.walletAddress);
+    
+    res.json({ 
+      success: true, 
+      sessions,
+      count: sessionCount,
+      contractAddress: "0x9D8090A0D65370A9c653f71e605718F397D1B69C",
+      explorerUrl: `https://scan.0g.ai/address/0x9D8090A0D65370A9c653f71e605718F397D1B69C`
+    });
+  } catch (err) {
+    console.error("Error fetching on-chain sessions:", err);
+    res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+};
+
+/**
+ * GET LATEST ON-CHAIN SESSION
+ */
+exports.getLatestSession = async (req, res) => {
+  try {
+    const session = await sessionService.getLatestSession(req.walletAddress);
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: "No sessions found for this player"
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      session 
+    });
+  } catch (err) {
+    console.error("Error fetching latest session:", err);
+    res.status(500).json({ error: "Failed to fetch latest session" });
+  }
+};
+
+/**
+ * GET BLOCKCHAIN STATS
+ */
+exports.getBlockchainStats = async (req, res) => {
+  try {
+    const sessionCount = await sessionService.getSessionCount(req.walletAddress);
+    const totalSessions = await sessionService.getTotalSessions();
+    const owner = await sessionService.getOwner();
+    const contractInfo = sessionService.getContractInfo();
+    
+    res.json({
+      success: true,
+      stats: {
+        yourSessions: sessionCount,
+        totalSessions: totalSessions,
+        contractOwner: owner,
+        ...contractInfo
+      }
+    });
+  } catch (err) {
+    console.error("Error fetching blockchain stats:", err);
+    res.status(500).json({ error: "Failed to fetch blockchain stats" });
   }
 };
