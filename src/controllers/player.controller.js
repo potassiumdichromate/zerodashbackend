@@ -1,5 +1,6 @@
 const Player = require("../models/Player");
 const sessionService = require("../blockchain/sessionService");
+const leaderboardService = require("../blockchain/leaderboardService");
 
 /**
  * GET PLAYER PROFILE
@@ -8,7 +9,6 @@ exports.getProfile = async (req, res) => {
   try {
     let player = await Player.findOne({ walletAddress: req.walletAddress });
 
-    // ✅ Create default player if not exists
     if (!player) {
       player = await Player.create({
         walletAddress: req.walletAddress,
@@ -33,7 +33,6 @@ exports.getProfile = async (req, res) => {
 
 /**
  * SAVE PLAYER STATE
- * Saves to both MongoDB AND 0G Blockchain
  */
 exports.saveProfile = async (req, res) => {
   try {
@@ -55,14 +54,13 @@ exports.saveProfile = async (req, res) => {
       update["dailyReward.nextRewardAt"] = new Date(dailyReward.nextRewardAt);
     }
 
-    // Save to MongoDB
     const player = await Player.findOneAndUpdate(
       { walletAddress: req.walletAddress },
       { $set: update },
       { upsert: true, new: true }
     );
 
-    // 🔥 Save to 0G Blockchain (non-blocking)
+    // Save to blockchain (non-blocking)
     let blockchainResult = null;
     try {
       blockchainResult = await sessionService.saveSessionOnChain(
@@ -89,11 +87,12 @@ exports.saveProfile = async (req, res) => {
 };
 
 /**
- * LEADERBOARD (TOP SCORES)
+ * LEADERBOARD (TOP SCORES) + Save to Blockchain
  */
 exports.getLeaderboard = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const userWallet = req.walletAddress || req.query.wallet;
 
     const players = await Player.find(
       {},
@@ -103,16 +102,53 @@ exports.getLeaderboard = async (req, res) => {
       .limit(limit)
       .lean();
 
-    res.json(players ?? []);
+    // Find user's standing if wallet provided
+    let userStanding = 0;
+    let userScore = 0;
+    
+    if (userWallet) {
+      const allPlayers = await Player.find({}, { walletAddress: 1, highScore: 1 })
+        .sort({ highScore: -1 })
+        .lean();
+      
+      const userIndex = allPlayers.findIndex(
+        p => p.walletAddress.toLowerCase() === userWallet.toLowerCase()
+      );
+      
+      if (userIndex !== -1) {
+        userStanding = userIndex + 1;
+        userScore = allPlayers[userIndex].highScore;
+      }
+    }
+
+    // 🔥 Save leaderboard snapshot to blockchain (non-blocking)
+    if (userWallet && userStanding > 0) {
+      leaderboardService.saveLeaderboardOnChain(
+        userWallet,
+        userWallet,
+        {
+          userScore,
+          userStanding,
+          topPlayers: players
+        }
+      ).catch(err => {
+        console.error("Leaderboard blockchain save failed (non-critical):", err);
+      });
+    }
+
+    res.json({
+      leaderboard: players ?? [],
+      userStanding: userStanding || null,
+      userScore: userScore || null
+    });
   } catch (err) {
     console.error("Leaderboard error:", err);
-    res.status(200).json([]);
+    res.status(200).json({ leaderboard: [], userStanding: null, userScore: null });
   }
 };
 
 /**
  * ACTIVATE NFT PASS
- * Called after successful NFT mint on blockchain
  */
 exports.activateNftPass = async (req, res) => {
   try {
@@ -157,8 +193,8 @@ exports.getOnChainSessions = async (req, res) => {
       success: true, 
       sessions,
       count: sessionCount,
-      contractAddress: "0x9D8090A0D65370A9c653f71e605718F397D1B69C",
-      explorerUrl: `https://scan.0g.ai/address/0x9D8090A0D65370A9c653f71e605718F397D1B69C`
+      contractAddress: process.env.SESSION_CONTRACT_ADDRESS,
+      explorerUrl: `https://chainscan.0g.ai/address/${process.env.SESSION_CONTRACT_ADDRESS}`
     });
   } catch (err) {
     console.error("Error fetching on-chain sessions:", err);
@@ -200,17 +236,72 @@ exports.getBlockchainStats = async (req, res) => {
     const owner = await sessionService.getOwner();
     const contractInfo = sessionService.getContractInfo();
     
+    // Leaderboard stats
+    const totalSnapshots = await leaderboardService.getTotalSnapshots();
+    const playerSnapshots = await leaderboardService.getPlayerSnapshots(req.walletAddress);
+    const latestTop3 = await leaderboardService.getLatestTop3();
+    
     res.json({
       success: true,
       stats: {
-        yourSessions: sessionCount,
-        totalSessions: totalSessions,
-        contractOwner: owner,
-        ...contractInfo
+        sessions: {
+          yourSessions: sessionCount,
+          totalSessions: totalSessions,
+          contractOwner: owner,
+          ...contractInfo
+        },
+        leaderboard: {
+          totalSnapshots,
+          yourSnapshots: playerSnapshots.length,
+          latestTop3,
+          ...leaderboardService.getContractInfo()
+        }
       }
     });
   } catch (err) {
     console.error("Error fetching blockchain stats:", err);
     res.status(500).json({ error: "Failed to fetch blockchain stats" });
+  }
+};
+
+/**
+ * GET LEADERBOARD SNAPSHOT
+ */
+exports.getLeaderboardSnapshot = async (req, res) => {
+  try {
+    const snapshotId = req.params.snapshotId;
+    
+    if (snapshotId === 'latest') {
+      const snapshot = await leaderboardService.getLatestSnapshot();
+      return res.json({ success: true, snapshot });
+    }
+    
+    const snapshot = await leaderboardService.getSnapshot(parseInt(snapshotId));
+    res.json({ success: true, snapshot });
+  } catch (err) {
+    console.error("Error fetching snapshot:", err);
+    res.status(500).json({ error: "Failed to fetch snapshot" });
+  }
+};
+
+/**
+ * GET PLAYER LEADERBOARD HISTORY
+ */
+exports.getPlayerLeaderboardHistory = async (req, res) => {
+  try {
+    const snapshotIds = await leaderboardService.getPlayerSnapshots(req.walletAddress);
+    
+    const snapshots = await Promise.all(
+      snapshotIds.map(id => leaderboardService.getSnapshot(id))
+    );
+    
+    res.json({
+      success: true,
+      count: snapshots.length,
+      snapshots: snapshots.filter(s => s !== null)
+    });
+  } catch (err) {
+    console.error("Error fetching player history:", err);
+    res.status(500).json({ error: "Failed to fetch player history" });
   }
 };
