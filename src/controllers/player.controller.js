@@ -3,7 +3,7 @@ const sessionService = require("../blockchain/sessionService");
 const leaderboardService = require("../blockchain/leaderboardService");
 
 /**
- * GET PLAYER PROFILE
+ * GET PLAYER PROFILE - WITH BLOCKCHAIN
  */
 exports.getProfile = async (req, res) => {
   try {
@@ -22,7 +22,22 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    return res.json(player);
+    // NEW: Record session on blockchain when profile is loaded
+    let blockchainResult = null;
+    try {
+      blockchainResult = await sessionService.saveSessionOnChain(
+        req.walletAddress,
+        player.coins,
+        player.highScore
+      );
+    } catch (blockchainError) {
+      console.error("Blockchain session recording failed (non-critical):", blockchainError);
+    }
+
+    return res.json({
+      ...player.toObject(),
+      blockchain: blockchainResult // NEW: Return blockchain result
+    });
   } catch (err) {
     console.error("Get profile error:", err);
     return res.status(500).json({
@@ -32,7 +47,7 @@ exports.getProfile = async (req, res) => {
 };
 
 /**
- * SAVE PLAYER STATE
+ * SAVE PLAYER STATE - WITH BLOCKCHAIN
  */
 exports.saveProfile = async (req, res) => {
   try {
@@ -60,7 +75,7 @@ exports.saveProfile = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // Save to blockchain (non-blocking)
+    // NEW: AWAIT blockchain save to return txHash
     let blockchainResult = null;
     try {
       blockchainResult = await sessionService.saveSessionOnChain(
@@ -70,13 +85,13 @@ exports.saveProfile = async (req, res) => {
       );
     } catch (blockchainError) {
       console.error("Blockchain save failed (non-critical):", blockchainError);
+      blockchainResult = { success: false, error: blockchainError.message };
     }
 
     res.json({ 
       success: true,
       savedToBlockchain: blockchainResult?.success || false,
-      txHash: blockchainResult?.txHash,
-      explorerUrl: blockchainResult?.explorerUrl
+      blockchain: blockchainResult // NEW: Return full blockchain result
     });
   } catch (err) {
     console.error("Save profile error:", err);
@@ -121,29 +136,38 @@ exports.getLeaderboard = async (req, res) => {
       }
     }
 
-    // 🔥 Save leaderboard snapshot to blockchain (non-blocking)
+    // NEW: AWAIT leaderboard blockchain save
+    let blockchainResult = null;
     if (userWallet && userStanding > 0) {
-      leaderboardService.saveLeaderboardOnChain(
-        userWallet,
-        userWallet,
-        {
-          userScore,
-          userStanding,
-          topPlayers: players
-        }
-      ).catch(err => {
+      try {
+        blockchainResult = await leaderboardService.saveLeaderboardOnChain(
+          userWallet,
+          userWallet,
+          {
+            userScore,
+            userStanding,
+            topPlayers: players
+          }
+        );
+      } catch (err) {
         console.error("Leaderboard blockchain save failed (non-critical):", err);
-      });
+        blockchainResult = { success: false, error: err.message };
+      }
     }
 
     res.json({
       leaderboard: players ?? [],
       userStanding: userStanding || null,
-      userScore: userScore || null
+      userScore: userScore || null,
+      blockchain: blockchainResult // NEW: Return blockchain result
     });
   } catch (err) {
     console.error("Leaderboard error:", err);
-    res.status(200).json({ leaderboard: [], userStanding: null, userScore: null });
+    res.status(200).json({ 
+      leaderboard: [], 
+      userStanding: null, 
+      userScore: null 
+    });
   }
 };
 
@@ -303,5 +327,18 @@ exports.getPlayerLeaderboardHistory = async (req, res) => {
   } catch (err) {
     console.error("Error fetching player history:", err);
     res.status(500).json({ error: "Failed to fetch player history" });
+  }
+};
+
+/**
+ * NEW: HEALTH CHECK ENDPOINT
+ */
+exports.healthCheck = async (req, res) => {
+  try {
+    const health = await sessionService.healthCheck();
+    res.json(health);
+  } catch (err) {
+    console.error("Health check error:", err);
+    res.status(500).json({ healthy: false, error: err.message });
   }
 };

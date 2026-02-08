@@ -2,7 +2,7 @@ const { ethers } = require("ethers");
 require("dotenv").config();
 
 // 🔥 Your deployed contract on 0G Mainnet
-const CONTRACT_ADDRESS = "0x9D8090A0D65370A9c653f71e605718F397D1B69C";
+const CONTRACT_ADDRESS = process.env.SESSION_CONTRACT_ADDRESS || "0x9D8090A0D65370A9c653f71e605718F397D1B69C";
 
 const ABI = [
   "function saveSession(address _player, uint256 _coins, uint256 _bestScore) external",
@@ -16,18 +16,36 @@ const ABI = [
 
 class SessionService {
   constructor() {
-    // 🔥 Connect to 0G MAINNET
-    this.provider = new ethers.JsonRpcProvider(
-      process.env.OG_MAINNET_RPC || "https://evmrpc.0g.ai"
-    );
-    
-    this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
-    this.contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, this.wallet);
-    
-    console.log("🔗 Connected to 0G Mainnet");
-    console.log("📍 Contract Address:", CONTRACT_ADDRESS);
-    console.log("👤 Deployer Address:", this.wallet.address);
-    console.log("🔍 Explorer:", `https://scan.0g.ai/address/${CONTRACT_ADDRESS}`);
+    this.initialized = false;
+    this.provider = null;
+    this.wallet = null;
+    this.contract = null;
+  }
+
+  async initialize() {
+    if (this.initialized) return { success: true };
+
+    try {
+      // 🔥 Connect to 0G MAINNET
+      this.provider = new ethers.JsonRpcProvider(
+        process.env.OG_MAINNET_RPC || "https://evmrpc.0g.ai"
+      );
+      
+      this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
+      this.contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, this.wallet);
+      
+      this.initialized = true;
+
+      console.log("🔗 Connected to 0G Mainnet");
+      console.log("📍 Contract Address:", CONTRACT_ADDRESS);
+      console.log("👤 Deployer Address:", this.wallet.address);
+      console.log("🔍 Explorer:", `https://chainscan.0g.ai/address/${CONTRACT_ADDRESS}`);
+
+      return { success: true };
+    } catch (error) {
+      console.error("❌ Failed to initialize session service:", error);
+      return { success: false, error: error.message };
+    }
   }
 
   /**
@@ -35,6 +53,11 @@ class SessionService {
    */
   async saveSessionOnChain(playerAddress, coins, bestScore) {
     try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) throw new Error(initResult.error);
+      }
+
       console.log(`💾 Saving session on-chain for ${playerAddress}`);
       console.log(`   Coins: ${coins}, Best Score: ${bestScore}`);
       
@@ -57,7 +80,7 @@ class SessionService {
       );
 
       console.log(`📤 Transaction sent: ${tx.hash}`);
-      console.log(`🔍 View on explorer: https://scan.0g.ai/tx/${tx.hash}`);
+      console.log(`🔍 View on explorer: https://chainscan.0g.ai/tx/${tx.hash}`);
       
       const receipt = await tx.wait();
       
@@ -67,10 +90,11 @@ class SessionService {
         success: true,
         txHash: tx.hash,
         blockNumber: receipt.blockNumber,
-        explorerUrl: `https://scan.0g.ai/tx/${tx.hash}`
+        gasUsed: receipt.gasUsed.toString(),
+        explorerUrl: `https://chainscan.0g.ai/tx/${tx.hash}`
       };
     } catch (error) {
-      console.error("❌ Blockchain save error:", error);
+      console.error("❌ Blockchain save error:", error.message);
       return {
         success: false,
         error: error.message
@@ -83,6 +107,11 @@ class SessionService {
    */
   async getPlayerSessions(playerAddress) {
     try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return [];
+      }
+
       const sessions = await this.contract.getPlayerSessions(playerAddress);
       return sessions.map(s => ({
         player: s.player,
@@ -102,6 +131,11 @@ class SessionService {
    */
   async getLatestSession(playerAddress) {
     try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return null;
+      }
+
       const session = await this.contract.getLatestSession(playerAddress);
       return {
         player: session.player,
@@ -121,6 +155,11 @@ class SessionService {
    */
   async getSessionCount(playerAddress) {
     try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return 0;
+      }
+
       const count = await this.contract.sessionCount(playerAddress);
       return Number(count);
     } catch (error) {
@@ -134,6 +173,11 @@ class SessionService {
    */
   async getTotalSessions() {
     try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return 0;
+      }
+
       const total = await this.contract.totalSessions();
       return Number(total);
     } catch (error) {
@@ -147,6 +191,11 @@ class SessionService {
    */
   async getOwner() {
     try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return null;
+      }
+
       const owner = await this.contract.owner();
       return owner;
     } catch (error) {
@@ -156,10 +205,42 @@ class SessionService {
   }
 
   /**
+   * Health check
+   */
+  async healthCheck() {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) throw new Error(initResult.error);
+      }
+
+      const balance = await this.provider.getBalance(this.wallet.address);
+      const totalSessions = await this.getTotalSessions();
+      const owner = await this.getOwner();
+
+      return {
+        healthy: true,
+        wallet: this.wallet.address,
+        balance: ethers.formatEther(balance),
+        contractAddress: CONTRACT_ADDRESS,
+        totalSessions: totalSessions.toString(),
+        contractOwner: owner,
+        network: "0G Mainnet",
+        explorerUrl: `https://chainscan.0g.ai/address/${CONTRACT_ADDRESS}`
+      };
+    } catch (error) {
+      return {
+        healthy: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Check if service is ready
    */
   isReady() {
-    return !!CONTRACT_ADDRESS && !!this.wallet && !!this.provider;
+    return this.initialized && !!this.contract && !!this.wallet && !!this.provider;
   }
 
   /**
@@ -169,8 +250,8 @@ class SessionService {
     return {
       address: CONTRACT_ADDRESS,
       network: "0G Mainnet",
-      explorerUrl: `https://scan.0g.ai/address/${CONTRACT_ADDRESS}`,
-      rpcUrl: this.provider._getConnection().url
+      explorerUrl: `https://chainscan.0g.ai/address/${CONTRACT_ADDRESS}`,
+      rpcUrl: this.provider?._getConnection().url || "https://evmrpc.0g.ai"
     };
   }
 }
