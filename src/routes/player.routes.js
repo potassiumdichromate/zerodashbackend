@@ -4,6 +4,7 @@ const ctrl = require("../controllers/player.controller");
 
 // Existing routes
 router.get("/profile", auth, ctrl.getProfile);
+router.post("/profile", auth, ctrl.getProfile);
 router.post("/save", auth, ctrl.saveProfile);
 router.get("/leaderboard", ctrl.getLeaderboard); // Now saves to blockchain!
 router.post("/nft-pass", auth, ctrl.activateNftPass);
