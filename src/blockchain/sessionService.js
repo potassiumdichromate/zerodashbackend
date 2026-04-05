@@ -1,0 +1,259 @@
+const { ethers } = require("ethers");
+require("dotenv").config();
+
+// 🔥 Your deployed contract on 0G Mainnet
+const CONTRACT_ADDRESS = process.env.SESSION_CONTRACT_ADDRESS || "0x9D8090A0D65370A9c653f71e605718F397D1B69C";
+
+const ABI = [
+  "function saveSession(address _player, uint256 _coins, uint256 _bestScore) external",
+  "function getPlayerSessions(address _player) external view returns (tuple(address player, uint256 coins, uint256 bestScore, uint256 timestamp)[])",
+  "function getLatestSession(address _player) external view returns (tuple(address player, uint256 coins, uint256 bestScore, uint256 timestamp))",
+  "function sessionCount(address _player) external view returns (uint256)",
+  "function totalSessions() external view returns (uint256)",
+  "function owner() external view returns (address)",
+  "event SessionSaved(address indexed player, uint256 coins, uint256 bestScore, uint256 timestamp, uint256 sessionId)"
+];
+
+class SessionService {
+  constructor() {
+    this.initialized = false;
+    this.provider = null;
+    this.wallet = null;
+    this.contract = null;
+  }
+
+  async initialize() {
+    if (this.initialized) return { success: true };
+
+    try {
+      // 🔥 Connect to 0G MAINNET
+      this.provider = new ethers.JsonRpcProvider(
+        process.env.OG_MAINNET_RPC || "https://evmrpc.0g.ai"
+      );
+      
+      this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
+      this.contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, this.wallet);
+      
+      this.initialized = true;
+
+      console.log("🔗 Connected to 0G Mainnet");
+      console.log("📍 Contract Address:", CONTRACT_ADDRESS);
+      console.log("👤 Deployer Address:", this.wallet.address);
+      console.log("🔍 Explorer:", `https://chainscan.0g.ai/address/${CONTRACT_ADDRESS}`);
+
+      return { success: true };
+    } catch (error) {
+      console.error("❌ Failed to initialize session service:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Save session to blockchain
+   */
+  async saveSessionOnChain(playerAddress, coins, bestScore) {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) throw new Error(initResult.error);
+      }
+
+      console.log(`💾 Saving session on-chain for ${playerAddress}`);
+      console.log(`   Coins: ${coins}, Best Score: ${bestScore}`);
+      
+      // Estimate gas first
+      const gasEstimate = await this.contract.saveSession.estimateGas(
+        playerAddress,
+        coins,
+        bestScore
+      );
+      
+      console.log(`⛽ Estimated gas: ${gasEstimate.toString()}`);
+      
+      const tx = await this.contract.saveSession(
+        playerAddress,
+        coins,
+        bestScore,
+        {
+          gasLimit: gasEstimate * 120n / 100n // Add 20% buffer
+        }
+      );
+
+      console.log(`📤 Transaction sent: ${tx.hash}`);
+      console.log(`🔍 View on explorer: https://chainscan.0g.ai/tx/${tx.hash}`);
+      
+      const receipt = await tx.wait();
+      
+      console.log(`✅ Session saved on-chain! Block: ${receipt.blockNumber}`);
+      
+      return {
+        success: true,
+        txHash: tx.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed.toString(),
+        explorerUrl: `https://chainscan.0g.ai/tx/${tx.hash}`
+      };
+    } catch (error) {
+      console.error("❌ Blockchain save error:", error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Get player's on-chain sessions
+   */
+  async getPlayerSessions(playerAddress) {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return [];
+      }
+
+      const sessions = await this.contract.getPlayerSessions(playerAddress);
+      return sessions.map(s => ({
+        player: s.player,
+        coins: Number(s.coins),
+        bestScore: Number(s.bestScore),
+        timestamp: Number(s.timestamp),
+        date: new Date(Number(s.timestamp) * 1000).toISOString()
+      }));
+    } catch (error) {
+      console.error("Error fetching sessions:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get latest session
+   */
+  async getLatestSession(playerAddress) {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return null;
+      }
+
+      const session = await this.contract.getLatestSession(playerAddress);
+      return {
+        player: session.player,
+        coins: Number(session.coins),
+        bestScore: Number(session.bestScore),
+        timestamp: Number(session.timestamp),
+        date: new Date(Number(session.timestamp) * 1000).toISOString()
+      };
+    } catch (error) {
+      console.error("Error fetching latest session:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get player's total sessions count
+   */
+  async getSessionCount(playerAddress) {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return 0;
+      }
+
+      const count = await this.contract.sessionCount(playerAddress);
+      return Number(count);
+    } catch (error) {
+      console.error("Error fetching session count:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get total sessions across all players
+   */
+  async getTotalSessions() {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return 0;
+      }
+
+      const total = await this.contract.totalSessions();
+      return Number(total);
+    } catch (error) {
+      console.error("Error fetching total sessions:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get contract owner
+   */
+  async getOwner() {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) return null;
+      }
+
+      const owner = await this.contract.owner();
+      return owner;
+    } catch (error) {
+      console.error("Error fetching owner:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Health check
+   */
+  async healthCheck() {
+    try {
+      if (!this.initialized) {
+        const initResult = await this.initialize();
+        if (!initResult.success) throw new Error(initResult.error);
+      }
+
+      const balance = await this.provider.getBalance(this.wallet.address);
+      const totalSessions = await this.getTotalSessions();
+      const owner = await this.getOwner();
+
+      return {
+        healthy: true,
+        wallet: this.wallet.address,
+        balance: ethers.formatEther(balance),
+        contractAddress: CONTRACT_ADDRESS,
+        totalSessions: totalSessions.toString(),
+        contractOwner: owner,
+        network: "0G Mainnet",
+        explorerUrl: `https://chainscan.0g.ai/address/${CONTRACT_ADDRESS}`
+      };
+    } catch (error) {
+      return {
+        healthy: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Check if service is ready
+   */
+  isReady() {
+    return this.initialized && !!this.contract && !!this.wallet && !!this.provider;
+  }
+
+  /**
+   * Get contract info
+   */
+  getContractInfo() {
+    return {
+      address: CONTRACT_ADDRESS,
+      network: "0G Mainnet",
+      explorerUrl: `https://chainscan.0g.ai/address/${CONTRACT_ADDRESS}`,
+      rpcUrl: this.provider?._getConnection().url || "https://evmrpc.0g.ai"
+    };
+  }
+}
+
+module.exports = new SessionService();
