@@ -13,7 +13,8 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
   "https://pub-c51325b05b6848599be1cf2978bc4c0e.r2.dev/v6",
-  "https://pub-c51325b05b6848599be1cf2978bc4c0e.r2.dev"
+  "https://pub-c51325b05b6848599be1cf2978bc4c0e.r2.dev",
+  "https://0g-testfrontend.vercel.app"
 ];
 
 app.use(
@@ -26,7 +27,8 @@ app.use(
       return callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization", "X-Save-Index"],
+    exposedHeaders: ["X-Root-Hash", "X-Save-Index", "X-Da-Status", "X-Checksum-Sha256"]
   })
 );
 
